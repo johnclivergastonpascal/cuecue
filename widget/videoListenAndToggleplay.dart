@@ -3,8 +3,6 @@ import 'package:video_player/video_player.dart';
 import 'package:flutter/material.dart';
 
 class VideoLogicHelper {
-  // ... (tus métodos handleVideoListener y togglePlay se mantienen igual) ...
-
   static void handleVideoListener({
     required VideoPlayerController? playerController,
     required PageController episodeController,

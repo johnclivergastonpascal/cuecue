@@ -1,10 +1,13 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:video_player/video_player.dart';
 import 'package:stack_appodeal_flutter/stack_appodeal_flutter.dart';
 
+// Tus imports de widgets personalizados
+import 'package:cuecue/widget/fade_in_button.dart';
 import 'package:cuecue/widget/build_ui_overlay.dart';
 import 'package:cuecue/widget/episode_sheet_helper.dart';
 import 'package:cuecue/widget/videoListenAndToggleplay.dart';
@@ -16,6 +19,7 @@ class VideoSegmentsView extends StatefulWidget {
   final bool isVisible;
   final Duration initialPosition;
   final Function(Duration) onTimeUpdate;
+  final Function(bool) onVisibilityChanged;
 
   const VideoSegmentsView({
     super.key,
@@ -25,6 +29,7 @@ class VideoSegmentsView extends StatefulWidget {
     this.startInEpisodeTwo = false,
     this.isVisible = true,
     this.initialPosition = Duration.zero,
+    required this.onVisibilityChanged,
   });
 
   @override
@@ -38,39 +43,51 @@ class _VideoSegmentsViewState extends State<VideoSegmentsView> {
   int _currentEp = 0;
   String? _currentVideoId;
 
-  // --- LÓGICA DE ANUNCIOS ---
   int _scrollCounter = 0;
   Timer? _adTimer;
   bool _isAdShowing = false;
 
-  // Estados para animaciones
+  Timer? _hideTimer;
+  bool _showControls = true;
+
   bool _showHeartIcon = false;
   bool _showPlayIcon = false;
   bool _isIconPlaying = false;
+  bool _showFullVideoButton = false;
 
   @override
   void initState() {
     super.initState();
     _currentEp = widget.initialPosition.inSeconds ~/ 120;
     if (widget.startInEpisodeTwo) _currentEp = 1;
-
     _episodeController = PageController(initialPage: _currentEp);
     _initEpisodePlayer();
-
-    // Iniciar lógica de anuncios
     _startAdTimer();
     _setupAdCallbacks();
+    _resetHideTimer();
+  }
+
+  void _resetHideTimer() {
+    _hideTimer?.cancel();
+    if (!_showControls) {
+      setState(() => _showControls = true);
+      widget.onVisibilityChanged(true);
+    }
+    _hideTimer = Timer(const Duration(seconds: 5), () {
+      if (mounted) {
+        setState(() => _showControls = false);
+        widget.onVisibilityChanged(false);
+      }
+    });
   }
 
   void _setupAdCallbacks() {
     Appodeal.setInterstitialCallbacks(
       onInterstitialShown: () {
-        debugPrint("APPODEAL: Anuncio mostrado, pausando video");
         if (mounted) setState(() => _isAdShowing = true);
         _playerController?.pause();
       },
       onInterstitialClosed: () {
-        debugPrint("APPODEAL: Anuncio cerrado, reanudando video");
         if (mounted) setState(() => _isAdShowing = false);
         if (widget.isVisible) _playerController?.play();
       },
@@ -82,21 +99,13 @@ class _VideoSegmentsViewState extends State<VideoSegmentsView> {
 
   void _startAdTimer() {
     _adTimer = Timer.periodic(const Duration(minutes: 10), (timer) {
-      if (widget.isVisible && !_isAdShowing) {
-        debugPrint("LÓGICA: Timer de 10 min saltó");
-        _showInterstitial();
-      }
+      if (widget.isVisible && !_isAdShowing) _showInterstitial();
     });
   }
 
-  // MÉDOTO PARA MOSTRAR ANUNCIO
   Future<void> _showInterstitial() async {
     bool isLoaded = await Appodeal.isLoaded(AppodealAdType.Interstitial);
-    if (isLoaded) {
-      Appodeal.show(AppodealAdType.Interstitial);
-    } else {
-      debugPrint("APPODEAL: El anuncio aún no está cargado");
-    }
+    if (isLoaded) Appodeal.show(AppodealAdType.Interstitial);
   }
 
   @override
@@ -158,8 +167,6 @@ class _VideoSegmentsViewState extends State<VideoSegmentsView> {
           await _playerController!.seekTo(const Duration(seconds: 120));
         } else if (widget.initialPosition > Duration.zero) {
           await _playerController!.seekTo(widget.initialPosition);
-        } else if (_currentEp > 0) {
-          await _playerController!.seekTo(Duration(seconds: _currentEp * 120));
         }
 
         setState(() => _isInitialized = true);
@@ -167,20 +174,29 @@ class _VideoSegmentsViewState extends State<VideoSegmentsView> {
         widget.onEpChanged(_currentEp + 1, _showSheet);
       }
     } catch (e) {
-      debugPrint("Error inicializando VideoSegments: $e");
+      debugPrint("Error: $e");
     }
   }
 
   void _videoListener() {
     if (_playerController == null || !_playerController!.value.isInitialized)
       return;
-    if (_isAdShowing && _playerController!.value.isPlaying) {
-      _playerController!.pause();
-      return;
+    final position = _playerController!.value.position;
+    final bool isVideoHorizontal = _playerController!.value.aspectRatio > 1.0;
+
+    if (position.inSeconds >= 10 &&
+        !_showFullVideoButton &&
+        isVideoHorizontal) {
+      setState(() => _showFullVideoButton = true);
+    } else if ((position.inSeconds < 10 || !isVideoHorizontal) &&
+        _showFullVideoButton) {
+      setState(() => _showFullVideoButton = false);
     }
+
     if (widget.isVisible && _playerController!.value.isPlaying) {
-      widget.onTimeUpdate(_playerController!.value.position);
+      widget.onTimeUpdate(position);
     }
+
     VideoLogicHelper.handleVideoListener(
       playerController: _playerController,
       episodeController: _episodeController,
@@ -191,6 +207,7 @@ class _VideoSegmentsViewState extends State<VideoSegmentsView> {
 
   void _handleTogglePlay() {
     if (_playerController == null || !_isInitialized || _isAdShowing) return;
+    _resetHideTimer();
     setState(() {
       if (_playerController!.value.isPlaying) {
         _playerController!.pause();
@@ -219,111 +236,223 @@ class _VideoSegmentsViewState extends State<VideoSegmentsView> {
   }
 
   Widget _buildVideoPager() {
+    // 1. PREVENCIÓN DE ERROR: Si los datos aún no llegan, devolvemos un fondo negro
+    // Esto evita el NoSuchMethodError y mantiene la app corriendo.
+    if (widget.videoData == null) {
+      return Container(color: Colors.black);
+    }
+
+    // 2. EXTRACCIÓN SEGURA DE DATOS
     final int duration = widget.videoData['duration'] ?? 0;
-    final int totalSegments = (duration / 120).ceil();
-    final String? thumbnailUrl =
-        widget.videoData['thumbnails']?['1080'] ??
-        widget.videoData['thumbnails']?['720'];
+    final int totalSegments = (duration <= 0) ? 1 : (duration / 120).ceil();
+
+    // Manejo de miniaturas tanto para la estructura de Dailymotion como para tu mapa interno
+    final dynamic thumbs = widget.videoData['thumbnails'];
+    final String? thumbnailUrl = (thumbs != null)
+        ? (thumbs['1080'] ?? thumbs['720'])
+        : (widget.videoData['thumbnail_1080_url'] ??
+              widget.videoData['thumbnail_720_url']);
 
     return PageView.builder(
       controller: _episodeController,
       scrollDirection: Axis.vertical,
-      physics: const AlwaysScrollableScrollPhysics(),
       itemCount: totalSegments,
+      // allowImplicitScrolling es CLAVE: Carga el siguiente segmento en memoria
+      // antes de que el usuario llegue a él, eliminando el lag.
+      allowImplicitScrolling: true,
       onPageChanged: (index) {
+        if (!mounted) return;
+        _resetHideTimer();
         setState(() => _currentEp = index);
+
+        // Notificamos el cambio de episodio al padre
         widget.onEpChanged(index + 1, _showSheet);
 
-        final newPosition = Duration(seconds: index * 120);
-        _playerController?.seekTo(newPosition);
-        widget.onTimeUpdate(newPosition);
+        // Mover el video a la posición del segmento (120 segundos por segmento)
+        final newPos = Duration(seconds: index * 120);
+        _playerController?.seekTo(newPos);
 
-        // --- AQUÍ ESTÁ LA LÓGICA DE LOS 5 EPISODIOS ---
+        // LÓGICA DE ANUNCIOS: Usamos Future.microtask para que el anuncio
+        // no interrumpa la animación del scroll.
         _scrollCounter++;
-        debugPrint("CONTADOR DE EPISODIOS: $_scrollCounter / 5");
-
         if (_scrollCounter >= 4) {
-          debugPrint("LÓGICA: Se alcanzó el límite de 5, mostrando anuncio...");
-          _scrollCounter = 0; // Reiniciar contador
-          _showInterstitial(); // Llamar al anuncio
+          _scrollCounter = 0;
+          Future.microtask(() => _showInterstitial());
         }
-
-        if (widget.isVisible && !_isAdShowing) _playerController?.play();
       },
       itemBuilder: (context, index) {
-        return GestureDetector(
-          onTap: _handleTogglePlay,
-          onDoubleTap: () async {
-            await VideoLogicHelper.toggleFavorite(widget.videoData['id']);
-            setState(() => _showHeartIcon = true);
-            Future.delayed(const Duration(milliseconds: 800), () {
-              if (mounted) setState(() => _showHeartIcon = false);
-            });
-          },
-          behavior: HitTestBehavior.opaque,
-          child: Stack(
-            fit: StackFit.expand,
-            children: [
-              if (thumbnailUrl != null && !_isInitialized)
-                Image.network(thumbnailUrl, fit: BoxFit.cover),
-              if (_isInitialized && _playerController != null)
-                Center(
-                  child: AspectRatio(
-                    aspectRatio: _playerController!.value.aspectRatio,
-                    child: VideoPlayer(_playerController!),
-                  ),
-                ),
-              if (_showHeartIcon)
-                Center(
-                  child: TweenAnimationBuilder(
-                    duration: const Duration(milliseconds: 400),
-                    tween: Tween<double>(begin: 0.0, end: 1.2),
-                    curve: Curves.elasticOut,
-                    builder: (context, double value, child) {
-                      return Transform.scale(
-                        scale: value,
-                        child: const Icon(
-                          Icons.favorite,
-                          color: Colors.redAccent,
-                          size: 110,
-                        ),
-                      );
-                    },
-                  ),
-                ),
-              if (_showPlayIcon && !_showHeartIcon)
-                Center(
-                  child: Container(
-                    padding: const EdgeInsets.all(15),
-                    decoration: BoxDecoration(
-                      color: Colors.black.withOpacity(0.3),
-                      shape: BoxShape.circle,
+        return OrientationBuilder(
+          builder: (context, orientation) {
+            final isLandscape = orientation == Orientation.landscape;
+
+            // --- LÓGICA DE AJUSTE DINÁMICO ---
+            BoxFit dynamicFit = BoxFit.contain;
+            bool useFullExpansion = false;
+
+            if (_isInitialized && _playerController != null) {
+              final videoAspectRatio = _playerController!.value.aspectRatio;
+              if (isLandscape) {
+                dynamicFit = BoxFit.fill;
+                useFullExpansion = true;
+              } else {
+                if (videoAspectRatio < 1.0) {
+                  dynamicFit =
+                      BoxFit.cover; // Pantalla completa para videos verticales
+                  useFullExpansion = true;
+                } else {
+                  dynamicFit = BoxFit.contain; // Proporcional para horizontales
+                  useFullExpansion = false;
+                }
+              }
+            }
+
+            return GestureDetector(
+              onTap: _handleTogglePlay,
+              onDoubleTap: () async {
+                final vidId = widget.videoData['id'];
+                if (vidId != null) {
+                  await VideoLogicHelper.toggleFavorite(vidId);
+                  if (mounted) setState(() => _showHeartIcon = true);
+                  Future.delayed(const Duration(milliseconds: 800), () {
+                    if (mounted) setState(() => _showHeartIcon = false);
+                  });
+                }
+              },
+              behavior: HitTestBehavior.opaque,
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  // Fondo base
+                  Container(color: Colors.black),
+
+                  // MINIATURA DE CARGA RÁPIDA
+                  // Se muestra solo si el video no está listo.
+                  // gaplessPlayback evita parpadeos blancos.
+                  if (thumbnailUrl != null && !_isInitialized)
+                    Image.network(
+                      thumbnailUrl,
+                      fit: isLandscape ? BoxFit.fill : BoxFit.contain,
+                      gaplessPlayback: true,
                     ),
-                    child: Icon(
+
+                  // RENDERIZADO DEL VIDEO
+                  if (_isInitialized && _playerController != null)
+                    Center(
+                      child: useFullExpansion
+                          ? SizedBox.expand(
+                              child: FittedBox(
+                                fit: dynamicFit,
+                                clipBehavior: Clip.hardEdge,
+                                child: SizedBox(
+                                  width: _playerController!.value.size.width,
+                                  height: _playerController!.value.size.height,
+                                  child: VideoPlayer(_playerController!),
+                                ),
+                              ),
+                            )
+                          : AspectRatio(
+                              aspectRatio: _playerController!.value.aspectRatio,
+                              child: VideoPlayer(_playerController!),
+                            ),
+                    ),
+
+                  // CAPA DE CONTROLES (Solo si el video ya cargó)
+                  if (_isInitialized)
+                    AnimatedOpacity(
+                      opacity: _showControls ? 1.0 : 0.0,
+                      duration: const Duration(milliseconds: 300),
+                      child: IgnorePointer(
+                        ignoring: !_showControls,
+                        child: Stack(
+                          children: [
+                            UIOverlayWidget(
+                              playerController: _playerController,
+                              currentEp: _currentEp + 1,
+                              title: widget.videoData['title'] ?? '',
+                              videoId: widget.videoData['id'] ?? '',
+                            ),
+                            // Botón de pantalla completa
+                            if (_showFullVideoButton)
+                              _buildFullScreenButton(isLandscape, context),
+                          ],
+                        ),
+                      ),
+                    ),
+
+                  // ICONOS DE FEEDBACK (Corazón / Play / Pause)
+                  if (_showHeartIcon)
+                    _buildCenterIcon(Icons.favorite, Colors.redAccent),
+                  if (_showPlayIcon && !_showHeartIcon)
+                    _buildCenterIcon(
                       _isIconPlaying
                           ? Icons.play_arrow_rounded
                           : Icons.pause_rounded,
-                      size: 70,
-                      color: Colors.cyanAccent.withOpacity(0.9),
+                      Colors.white,
+                      withBackground: true,
                     ),
-                  ),
-                ),
-              UIOverlayWidget(
-                playerController: _playerController,
-                currentEp: _currentEp + 1,
-                title: widget.videoData['title'] ?? '',
-                videoId: widget.videoData['id'],
+                ],
               ),
-            ],
-          ),
+            );
+          },
         );
       },
+    );
+  }
+
+  // Widget auxiliar para los iconos centrales (evita repetir código)
+  Widget _buildCenterIcon(
+    IconData icon,
+    Color color, {
+    bool withBackground = false,
+  }) {
+    return Center(
+      child: Container(
+        padding: withBackground ? const EdgeInsets.all(15) : EdgeInsets.zero,
+        decoration: withBackground
+            ? const BoxDecoration(color: Colors.black38, shape: BoxShape.circle)
+            : null,
+        child: Icon(icon, size: withBackground ? 70 : 110, color: color),
+      ),
+    );
+  }
+
+  // Widget auxiliar para el botón de pantalla completa
+  Widget _buildFullScreenButton(bool isLandscape, BuildContext context) {
+    return Positioned(
+      bottom: isLandscape ? 30 : MediaQuery.of(context).size.height * 0.25,
+      left: 0,
+      right: 0,
+      child: Center(
+        child: FadeInButton(
+          isLandscape: isLandscape,
+          onPressed: () async {
+            _resetHideTimer();
+            if (isLandscape) {
+              await SystemChrome.setPreferredOrientations([
+                DeviceOrientation.portraitUp,
+              ]);
+              await SystemChrome.setEnabledSystemUIMode(
+                SystemUiMode.edgeToEdge,
+              );
+            } else {
+              await SystemChrome.setPreferredOrientations([
+                DeviceOrientation.landscapeLeft,
+                DeviceOrientation.landscapeRight,
+              ]);
+              await SystemChrome.setEnabledSystemUIMode(
+                SystemUiMode.immersiveSticky,
+              );
+            }
+          },
+        ),
+      ),
     );
   }
 
   @override
   void dispose() {
     _adTimer?.cancel();
+    _hideTimer?.cancel();
     _playerController?.removeListener(_videoListener);
     _playerController?.dispose();
     _episodeController.dispose();

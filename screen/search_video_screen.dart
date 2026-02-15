@@ -23,58 +23,83 @@ class _SearchVideosViewState extends State<SearchVideosView> {
 
     setState(() {
       _isLoading = true;
-      _searchResults = []; // Limpiar resultados previos
+      _searchResults = [];
     });
 
-    String searchQuery = query.toLowerCase();
-    int page = 1;
-    bool hasMore = true;
-    List<dynamic> collectedVideos = [];
+    final String searchQuery = query.toLowerCase();
+    final List<String> channels = [
+      'CinePulseChannel',
+      'combofilm',
+      'LCHDORAMAS',
+      'NovelasHDTM',
+    ];
+
+    List<dynamic> allCollectedVideos = [];
 
     try {
-      // Bucle "Deep Search": Recorre páginas hasta encontrar contenido o llegar al fin
-      while (hasMore && collectedVideos.length < 20) {
-        final response = await http.get(
-          Uri.parse(
-            'https://api.dailymotion.com/user/CinePulseChannel/videos?fields=id,title,thumbnail_720_url,duration&limit=100&page=$page',
-          ),
-        );
+      // 1. Creamos una lista de "buscadores" (uno por cada canal)
+      final searchTasks = channels.map((channel) async {
+        List<dynamic> channelMatches = [];
+        int page = 1;
+        bool hasMore = true;
 
-        if (response.statusCode == 200) {
-          final data = json.decode(response.body);
-          List<dynamic> fetchedList = data['list'];
+        // 2. Cada canal hace su propio bucle interno de búsqueda
+        while (hasMore && channelMatches.length < 15) {
+          // Límite por canal
+          final response = await http.get(
+            Uri.parse(
+              'https://api.dailymotion.com/user/$channel/videos?fields=id,title,thumbnail_720_url,duration&limit=100&page=$page',
+            ),
+          );
 
-          if (fetchedList.isEmpty) {
-            hasMore = false; // Ya no hay más videos en el canal
+          if (response.statusCode == 200) {
+            final List<dynamic> fetchedList = json.decode(
+              response.body,
+            )['list'];
+
+            if (fetchedList.isEmpty) {
+              hasMore = false;
+            } else {
+              // Filtrado local por término de búsqueda
+              var matches = fetchedList.where((video) {
+                String title = video['title'].toString().toLowerCase();
+                return title.contains(searchQuery);
+              }).toList();
+
+              channelMatches.addAll(matches);
+
+              // Si la página no vino llena, no hay más videos
+              if (fetchedList.length < 100) hasMore = false;
+            }
+            page++;
+
+            // Seguridad para no quedar en bucle infinito
+            if (page > 10) hasMore = false;
           } else {
-            // Filtramos localmente para asegurar que la palabra esté en el título
-            var matches = fetchedList.where((video) {
-              String title = video['title'].toString().toLowerCase();
-              return title.contains(searchQuery);
-            }).toList();
-
-            collectedVideos.addAll(matches);
-
-            // Si la API nos dio menos de 100, es la última página
-            if (fetchedList.length < 100) hasMore = false;
+            hasMore = false;
           }
-          page++;
-
-          // Seguridad: Si pasamos de la página 10 y no hay nada, paramos para no bloquear la app
-          if (page > 10 && collectedVideos.isEmpty) hasMore = false;
-        } else {
-          hasMore = false;
         }
+        return channelMatches;
+      }).toList();
+
+      // 3. Esperamos a que todos los canales terminen su búsqueda
+      final resultsPerChannel = await Future.wait(searchTasks);
+
+      // 4. Aplanamos la lista de listas en una sola lista final
+      for (var list in resultsPerChannel) {
+        allCollectedVideos.addAll(list);
       }
 
       if (mounted) {
         setState(() {
-          _searchResults = collectedVideos;
+          // Mezclamos para que los resultados de búsqueda sean variados
+          allCollectedVideos.shuffle();
+          _searchResults = allCollectedVideos;
           _isLoading = false;
         });
       }
     } catch (e) {
-      debugPrint("Error en Deep Search: $e");
+      debugPrint("Error en Multi-Channel Deep Search: $e");
       if (mounted) setState(() => _isLoading = false);
     }
   }

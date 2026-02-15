@@ -34,39 +34,70 @@ class _ExplorerViewState extends State<ExplorerView> {
   }
 
   Future<void> _loadInitialData() async {
+    // 1. Define la lista de canales que quieres consultar
+    final List<String> channels = [
+      'CinePulseChannel',
+      'combofilm',
+      'LCHDORAMAS',
+      'NovelasHDTM',
+    ];
+
     try {
-      final response = await http.get(
-        Uri.parse(
-          'https://api.dailymotion.com/user/CinePulseChannel/videos?fields=id,title,thumbnail_720_url,duration,views_total&limit=100',
-        ),
-      );
+      // 2. Creamos las peticiones en paralelo
+      final requests = channels.map((channel) {
+        return http.get(
+          Uri.parse(
+            'https://api.dailymotion.com/user/$channel/videos?fields=id,title,thumbnail_720_url,duration,views_total&limit=50', // Bajamos a 50 para no saturar si son muchos canales
+          ),
+        );
+      }).toList();
 
-      if (response.statusCode == 200) {
-        final List<dynamic> fetchedVideos = json.decode(response.body)['list'];
-        Set<String> extractedWords = {"All"};
-        for (var video in fetchedVideos) {
-          String title = video['title'].toString();
-          List<String> words = title
-              .split(' ')
-              .where((w) => w.length > 5)
-              .map((w) => w.replaceAll(RegExp(r'[^\w\s]'), ''))
-              .toList();
+      final responses = await Future.wait(requests);
 
-          if (words.isNotEmpty) {
-            extractedWords.add(words[0]);
+      List<dynamic> allFetchedVideos = [];
+      Set<String> extractedWords = {"All"};
+
+      // 3. Procesamos cada respuesta
+      for (var response in responses) {
+        if (response.statusCode == 200) {
+          final List<dynamic> fetchedVideos = json.decode(
+            response.body,
+          )['list'];
+          allFetchedVideos.addAll(fetchedVideos);
+
+          // Extraemos palabras para categorías de este set de videos
+          for (var video in fetchedVideos) {
+            String title = video['title'].toString();
+            List<String> words = title
+                .split(' ')
+                .where((w) => w.length > 5)
+                .map((w) => w.replaceAll(RegExp(r'[^\w\s]'), ''))
+                .toList();
+
+            if (words.isNotEmpty) {
+              extractedWords.add(words[0]);
+            }
           }
         }
+      }
 
+      // 4. Actualizamos el estado una sola vez con la data combinada
+      if (mounted) {
         setState(() {
-          _allVideos = fetchedVideos;
-          _displayVideos = fetchedVideos;
+          // Opcional: Mezclar para que no aparezcan todos los de un canal primero
+          allFetchedVideos.shuffle();
+
+          _allVideos = allFetchedVideos;
+          _displayVideos = allFetchedVideos;
+
+          // Tomamos las primeras 10 palabras únicas como categorías
           _dynamicCategories = extractedWords.take(10).toList();
           _isLoading = false;
         });
       }
     } catch (e) {
       debugPrint("Error loading data: $e");
-      setState(() => _isLoading = false);
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 

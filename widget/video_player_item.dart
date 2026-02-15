@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'package:cuecue/widget/build_ui_overlay.dart';
 import 'package:cuecue/widget/fade_in_button.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:video_player/video_player.dart';
 
@@ -152,7 +153,6 @@ class _VideoPlayerItemState extends State<VideoPlayerItem> {
               SizedBox.expand(
                 child: Image.network(
                   thumbUrl,
-                  fit: BoxFit.cover,
                   // precacheImage en el feed hará que esto aparezca al instante
                   frameBuilder:
                       (context, child, frame, wasSynchronouslyLoaded) => child,
@@ -162,23 +162,44 @@ class _VideoPlayerItemState extends State<VideoPlayerItem> {
               ),
 
             // 2. BOTÓN "VER COMPLETO" (Nuevo Widget)
+            // 2. BOTÓN "VER COMPLETO"
             if (_showFullVideoButton)
               Positioned(
-                bottom: 120, // Ajusta según la altura de tu UIOverlay
-                right: 20,
-                child: FadeInButton(
-                  onPressed: () {
-                    // Forzamos el límite para que el MainScreen detecte el cambio
-                    widget.onTimeUpdate(120);
-                  },
+                bottom:
+                    175, // Lo bajamos un poco para que esté cerca del borde inferior
+                left: 0,
+                right: 0,
+                child: Center(
+                  // Esto lo centra horizontalmente
+                  child: GestureDetector(
+                    onTap:
+                        () {}, // ESTO ES CLAVE: Detiene el tap para que el video NO se pause
+                    child: FadeInButton(
+                      onPressed: () async {
+                        // 1. Girar primero
+                        await SystemChrome.setPreferredOrientations([
+                          DeviceOrientation.landscapeLeft,
+                          DeviceOrientation.landscapeRight,
+                        ]);
+
+                        await SystemChrome.setEnabledSystemUIMode(
+                          SystemUiMode.immersiveSticky,
+                        );
+
+                        // 2. Esperar un poquito a que el sensor reaccione
+                        await Future.delayed(const Duration(milliseconds: 200));
+
+                        // 3. Cambiar de página
+                        widget.onTimeUpdate(120);
+                      },
+                    ),
+                  ),
                 ),
               ),
-
             // 3. EL VIDEO (Se dibuja encima cuando está listo)
             if (isInitialized && _controller != null)
               SizedBox.expand(
                 child: FittedBox(
-                  fit: BoxFit.cover,
                   child: SizedBox(
                     width: _controller!.value.size.width,
                     height: _controller!.value.size.height,
@@ -201,6 +222,7 @@ class _VideoPlayerItemState extends State<VideoPlayerItem> {
               currentEp: (widget.initialPosition.inSeconds ~/ 120) + 1,
               title: widget.title,
               videoId: widget.videoId,
+              showBanner: false,
             ),
           ],
         ),

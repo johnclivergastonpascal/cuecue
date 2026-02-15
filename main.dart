@@ -7,32 +7,40 @@ import 'package:workmanager/workmanager.dart';
 import 'package:cuecue/screen/main_screen.dart';
 
 void main() async {
-  // 1. Asegura que los bindings de Flutter estén listos
   WidgetsFlutterBinding.ensureInitialized();
 
-  // 2. Inicializar Workmanager para las notificaciones cada 2 horas
-  await Workmanager().initialize(
-    callbackDispatcher,
-    isInDebugMode: false, // Cámbialo a true para ver logs en consola
-  );
+  // 1. Workmanager
+  await Workmanager().initialize(callbackDispatcher);
 
+  // 2. Permisos de notificaciones
   final FlutterLocalNotificationsPlugin notifications =
       FlutterLocalNotificationsPlugin();
-
   await notifications
       .resolvePlatformSpecificImplementation<
         AndroidFlutterLocalNotificationsPlugin
       >()
       ?.requestNotificationsPermission();
 
-  // 3. Registrar la tarea periódica (mínimo 15 min por Android, pusimos 2 horas)
+  // 3. Registrar tarea
   await Workmanager().registerPeriodicTask(
     "videoTask",
     "checkNewVideo",
-    initialDelay: const Duration(hours: 2),
+    frequency: const Duration(hours: 2), // Asegúrate de usar 'frequency'
+    existingWorkPolicy: ExistingPeriodicWorkPolicy.keep,
   );
 
-  // 4. Inicialización de Appodeal antes de runApp
+  // 4. INICIALIZACIÓN DE APPODEAL MEJORADA
+  // No bloqueamos el inicio de la app, dejamos que cargue en segundo plano
+  Appodeal.setTesting(
+    true,
+  ); // <--- AGREGA ESTO PARA PROBAR (Quitar en producción)
+
+  // Opcional: Configurar callbacks para saber si falla
+  Appodeal.setBannerCallbacks(
+    onBannerFailedToLoad: () => print("Banner falló"),
+    onBannerLoaded: (isPrecache) => print("Banner cargado con éxito"),
+  );
+
   await Appodeal.initialize(
     appKey: "a65c3aee15b484cb9e4833fcc63d4786de15d50b408ccad2",
     adTypes: [

@@ -2,37 +2,54 @@ import 'package:flutter/material.dart';
 
 class FadeInButton extends StatelessWidget {
   final VoidCallback onPressed;
-  const FadeInButton({super.key, required this.onPressed});
+  final bool isLandscape;
+
+  const FadeInButton({
+    super.key,
+    required this.onPressed,
+    this.isLandscape = false,
+  });
 
   @override
   Widget build(BuildContext context) {
-    return TweenAnimationBuilder<double>(
-      tween: Tween(begin: 0.0, end: 1.0),
-      duration: const Duration(milliseconds: 500),
-      builder: (context, value, child) {
-        return Opacity(
-          opacity: value,
-          child: Transform.translate(
-            offset: Offset(0, 20 * (1 - value)),
-            child: child,
+    return Padding(
+      // --- AJUSTA ESTE VALOR PARA SUBIRLO MÁS ---
+      padding: EdgeInsets.only(bottom: isLandscape ? 65 : 60),
+      child: TweenAnimationBuilder<double>(
+        key: ValueKey(isLandscape),
+        tween: Tween(begin: 0.0, end: 1.0),
+        duration: const Duration(milliseconds: 600),
+        curve: Curves.easeOutCubic,
+        builder: (context, value, child) {
+          // Ajuste de posición inicial de la animación
+          double offsetX = isLandscape ? (40 * (1 - value)) : 0.0;
+          double offsetY = isLandscape ? 0.0 : (40 * (1 - value));
+
+          return Opacity(
+            opacity: value,
+            child: Transform.translate(
+              offset: Offset(offsetX, offsetY),
+              child: child,
+            ),
+          );
+        },
+        child: ElevatedButton.icon(
+          onPressed: onPressed,
+          style: ElevatedButton.styleFrom(
+            backgroundColor: Colors.white24,
+            foregroundColor: Colors.white,
+            elevation: 0,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(30),
+              side: const BorderSide(color: Colors.white30),
+            ),
+            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
           ),
-        );
-      },
-      child: ElevatedButton.icon(
-        onPressed: onPressed,
-        style: ElevatedButton.styleFrom(
-          backgroundColor: Colors.cyanAccent.withValues(alpha: 0.8),
-          foregroundColor: Colors.black,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(20),
+          icon: Icon(isLandscape ? Icons.fullscreen_exit : Icons.fullscreen),
+          label: Text(
+            isLandscape ? "Salir de pantalla completa" : "Ver completo",
+            style: const TextStyle(fontWeight: FontWeight.bold),
           ),
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-          elevation: 8,
-        ),
-        icon: const Icon(Icons.fullscreen, size: 20),
-        label: const Text(
-          "Ver completo",
-          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
         ),
       ),
     );

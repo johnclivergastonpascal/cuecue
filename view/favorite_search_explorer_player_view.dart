@@ -1,5 +1,6 @@
 import 'package:cuecue/view/video_segments_view.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 class FavoriteSearchPlayerView extends StatefulWidget {
   final Map<String, dynamic> videoData;
@@ -34,6 +35,15 @@ class _FavoriteSearchPlayerViewState extends State<FavoriteSearchPlayerView> {
   }
 
   @override
+  void dispose() {
+    SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
+
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.black,
@@ -53,6 +63,7 @@ class _FavoriteSearchPlayerViewState extends State<FavoriteSearchPlayerView> {
                   _openModal = openModalFunc;
                 });
               },
+              onVisibilityChanged: (bool p1) {},
             ),
           ),
 
@@ -70,7 +81,7 @@ class _FavoriteSearchPlayerViewState extends State<FavoriteSearchPlayerView> {
                   child: Icon(
                     _isPlaying ? Icons.play_arrow_rounded : Icons.pause_rounded,
                     size: 80,
-                    color: Colors.cyanAccent,
+                    color: Colors.white,
                   ),
                 ),
               ),
@@ -110,14 +121,12 @@ class _FavoriteSearchPlayerViewState extends State<FavoriteSearchPlayerView> {
                   decoration: BoxDecoration(
                     color: Colors.black.withOpacity(0.6),
                     borderRadius: BorderRadius.circular(20),
-                    border: Border.all(
-                      color: Colors.cyanAccent.withOpacity(0.5),
-                    ),
+                    border: Border.all(color: Colors.white.withOpacity(0.5)),
                   ),
                   child: Text(
                     "EPISODIO $_currentEp",
                     style: const TextStyle(
-                      color: Colors.cyanAccent,
+                      color: Colors.white,
                       fontWeight: FontWeight.bold,
                       fontSize: 12,
                     ),
@@ -126,7 +135,7 @@ class _FavoriteSearchPlayerViewState extends State<FavoriteSearchPlayerView> {
                 const SizedBox(width: 10),
                 Container(
                   decoration: BoxDecoration(
-                    color: Colors.cyanAccent.withOpacity(0.9),
+                    color: Colors.white.withOpacity(0.9),
                     shape: BoxShape.circle,
                   ),
                   child: IconButton(

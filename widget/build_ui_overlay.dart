@@ -3,14 +3,17 @@ import 'package:flutter/services.dart';
 import 'package:video_player/video_player.dart';
 import 'package:cuecue/widget/build_slider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:stack_appodeal_flutter/stack_appodeal_flutter.dart'; // Importante
+import 'package:stack_appodeal_flutter/stack_appodeal_flutter.dart';
 import 'dart:ui';
+import 'dart:async'; // Necesario para el Timer
 
 class UIOverlayWidget extends StatefulWidget {
   final VideoPlayerController? playerController;
   final int currentEp;
   final String title;
   final String videoId;
+  final bool
+  showBanner; // Mantenemos el flag por si el padre quiere apagarlo fijo
 
   const UIOverlayWidget({
     super.key,
@@ -18,6 +21,7 @@ class UIOverlayWidget extends StatefulWidget {
     required this.currentEp,
     required this.title,
     required this.videoId,
+    this.showBanner = true,
   });
 
   @override
@@ -27,16 +31,43 @@ class UIOverlayWidget extends StatefulWidget {
 class _UIOverlayWidgetState extends State<UIOverlayWidget> {
   bool isFavorite = false;
 
+  // Lógica para el banner intermitente
+  bool _isBannerVisible = true;
+  Timer? _bannerTimer;
+
   @override
   void initState() {
     super.initState();
     _checkIfFavorite();
+
+    // Si el padre permite banners, iniciamos el ciclo de 10 segundos
+    if (widget.showBanner) {
+      _startBannerCycle();
+    }
+  }
+
+  @override
+  void dispose() {
+    _bannerTimer?.cancel(); // IMPORTANTE: Limpiar el timer al cerrar
+    super.dispose();
+  }
+
+  void _startBannerCycle() {
+    _bannerTimer = Timer.periodic(const Duration(seconds: 10), (timer) {
+      if (mounted) {
+        setState(() {
+          _isBannerVisible = !_isBannerVisible;
+        });
+      }
+    });
   }
 
   @override
   void didUpdateWidget(covariant UIOverlayWidget oldWidget) {
     super.didUpdateWidget(oldWidget);
-    _checkIfFavorite();
+    if (oldWidget.videoId != widget.videoId) {
+      _checkIfFavorite();
+    }
   }
 
   Future<void> _checkIfFavorite() async {
@@ -89,7 +120,6 @@ class _UIOverlayWidgetState extends State<UIOverlayWidget> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              // --- CONTROLES EXISTENTES ---
               Row(
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
@@ -121,13 +151,21 @@ class _UIOverlayWidgetState extends State<UIOverlayWidget> {
                 ],
               ),
 
-              // --- ESPACIO Y ANUNCIO ---
-              const SizedBox(height: 10),
-
-              // Banner de Appodeal
-              AppodealBanner(
-                adSize: AppodealBannerSize.BANNER,
-                placement: "default",
+              // Banner con visibilidad dinámica y animación suave
+              AnimatedSize(
+                duration: const Duration(milliseconds: 500),
+                child: Visibility(
+                  visible: widget.showBanner && _isBannerVisible,
+                  child: Column(
+                    children: [
+                      const SizedBox(height: 10),
+                      AppodealBanner(
+                        adSize: AppodealBannerSize.BANNER,
+                        placement: "default",
+                      ),
+                    ],
+                  ),
+                ),
               ),
             ],
           ),

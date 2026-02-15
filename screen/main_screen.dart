@@ -9,6 +9,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 
+// ignore: must_be_immutable
 class MainScreen extends StatefulWidget {
   String? initialVideoId;
   MainScreen({super.key, this.initialVideoId});
@@ -38,9 +39,8 @@ class _MainScreenState extends State<MainScreen> {
     showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (context) => const Center(
-        child: CircularProgressIndicator(color: Colors.cyanAccent),
-      ),
+      builder: (context) =>
+          const Center(child: CircularProgressIndicator(color: Colors.yellow)),
     );
 
     try {
@@ -114,6 +114,28 @@ class _MainScreenState extends State<MainScreen> {
     });
   }
 
+  void _backToVertical() async {
+    // 1. Forzar vertical
+    await SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
+
+    // 2. Mostrar barras del sistema
+    await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+
+    // 3. Volver a la página 0 (Feed) con animación
+    if (_forYouHorizontalController.hasClients && _selectedIndex == 1) {
+      await _forYouHorizontalController.animateToPage(
+        0,
+        duration: const Duration(milliseconds: 300),
+        curve: Curves.easeInOut,
+      );
+    }
+
+    // 4. Actualizar el índice interno para que el AppBar cambie
+    setState(() {
+      _innerHorizontalIndex = 0;
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     bool isDetailsVisible = _selectedIndex == 1 && _innerHorizontalIndex == 1;
@@ -123,11 +145,7 @@ class _MainScreenState extends State<MainScreen> {
       canPop: false,
       onPopInvokedWithResult: (didPop, result) async {
         if (_innerHorizontalIndex == 1) {
-          _forYouHorizontalController.animateToPage(
-            0,
-            duration: const Duration(milliseconds: 300),
-            curve: Curves.easeInOut,
-          );
+          _backToVertical();
           return;
         }
         if (_selectedIndex != 1) {
@@ -146,21 +164,19 @@ class _MainScreenState extends State<MainScreen> {
         }
       },
       child: Scaffold(
+        // IMPORTANTE: Esto evita que el video "salte" hacia arriba al quitar el AppBar
         extendBodyBehindAppBar: true,
         appBar: hideAppBar
             ? null
             : AppBar(
                 backgroundColor: Colors.transparent,
                 elevation: 0,
+                // Busca esta parte en tu AppBar:
                 leading: isDetailsVisible
                     ? IconButton(
                         icon: const Icon(Icons.arrow_back_ios_new),
-                        onPressed: () =>
-                            _forYouHorizontalController.animateToPage(
-                              0,
-                              duration: const Duration(milliseconds: 300),
-                              curve: Curves.easeInOut,
-                            ),
+                        // CAMBIA ESTO:
+                        onPressed: _backToVertical,
                       )
                     : IconButton(
                         icon: const Icon(Icons.favorite_border, size: 28),
@@ -184,12 +200,19 @@ class _MainScreenState extends State<MainScreen> {
                       ),
                 actions: [
                   if (isDetailsVisible)
-                    IconButton(
-                      icon: const Icon(
-                        Icons.grid_view_rounded,
-                        color: Colors.cyanAccent,
+                    Container(
+                      decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(0.9),
+                        shape: BoxShape.circle,
                       ),
-                      onPressed: () => _openModalFromAppBar?.call(),
+                      child: IconButton(
+                        icon: const Icon(
+                          Icons.grid_view_rounded,
+                          color: Colors.black,
+                          size: 22,
+                        ),
+                        onPressed: () => _openModalFromAppBar?.call(),
+                      ),
                     )
                   else
                     IconButton(
@@ -198,8 +221,7 @@ class _MainScreenState extends State<MainScreen> {
                     ),
                 ],
               ),
-        body: // ... dentro del body de MainScreen ...
-        IndexedStack(
+        body: IndexedStack(
           index: _selectedIndex,
           children: [
             ExplorerView(),
@@ -249,6 +271,10 @@ class _MainScreenState extends State<MainScreen> {
                       _openModalFromAppBar = openModal;
                     });
                   },
+                  onVisibilityChanged: (visible) {
+                    hideAppBar =
+                        !visible; // Si visible es false, ocultamos el AppBar
+                  },
                 ),
               ],
             ),
@@ -272,7 +298,7 @@ class _MainScreenState extends State<MainScreen> {
             : BottomNavigationBar(
                 type: BottomNavigationBarType.fixed,
                 backgroundColor: Colors.black,
-                selectedItemColor: Colors.cyanAccent,
+                selectedItemColor: Colors.white,
                 unselectedItemColor: Colors.white60,
                 currentIndex: _selectedIndex,
                 onTap: _onNavigationTap,
