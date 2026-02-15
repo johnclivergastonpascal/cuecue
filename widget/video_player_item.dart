@@ -166,7 +166,7 @@ class _VideoPlayerItemState extends State<VideoPlayerItem> {
             if (_showFullVideoButton)
               Positioned(
                 bottom:
-                    175, // Lo bajamos un poco para que esté cerca del borde inferior
+                    130, // Lo bajamos un poco para que esté cerca del borde inferior
                 left: 0,
                 right: 0,
                 child: Center(

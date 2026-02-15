@@ -1,9 +1,12 @@
 import 'dart:convert';
-import 'package:cuecue/widget/tiktok_loader.dart';
+import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
-import 'package:stack_appodeal_flutter/stack_appodeal_flutter.dart'; // Importar Appodeal
+import 'package:shimmer/shimmer.dart';
+import 'package:stack_appodeal_flutter/stack_appodeal_flutter.dart';
 import 'package:cuecue/view/favorite_search_explorer_player_view.dart';
+import 'package:flutter_staggered_animations/flutter_staggered_animations.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class ExplorerView extends StatefulWidget {
   const ExplorerView({super.key});
@@ -17,7 +20,7 @@ class _ExplorerViewState extends State<ExplorerView> {
   List<dynamic> _allVideos = [];
   List<dynamic> _displayVideos = [];
   List<String> _dynamicCategories = ["All"];
-
+  List<String> _favoriteIds = [];
   bool _isLoading = true;
   String _selectedCategory = "All";
 
@@ -25,6 +28,7 @@ class _ExplorerViewState extends State<ExplorerView> {
   void initState() {
     super.initState();
     _loadInitialData();
+    _loadFavorites();
   }
 
   @override
@@ -33,39 +37,66 @@ class _ExplorerViewState extends State<ExplorerView> {
     super.dispose();
   }
 
+  // --- PERSISTENCIA DE FAVORITOS ---
+  Future<void> _loadFavorites() async {
+    final prefs = await SharedPreferences.getInstance();
+    setState(() {
+      _favoriteIds = prefs.getStringList('favorite_videos') ?? [];
+    });
+  }
+
+  Future<void> _toggleFavorite(String id) async {
+    final prefs = await SharedPreferences.getInstance();
+    setState(() {
+      if (_favoriteIds.contains(id)) {
+        _favoriteIds.remove(id);
+      } else {
+        _favoriteIds.add(id);
+      }
+    });
+    await prefs.setStringList('favorite_videos', _favoriteIds);
+  }
+
+  // --- LÓGICA DE EPISODIOS BASADA EN DURACIÓN ---
+  // Dailymotion entrega 'duration' en segundos.
+  // Dividimos segundos / 60 para tener minutos, y luego / 2 para los episodios.
+  String _calculateEpisodesFromDuration(dynamic duration) {
+    if (duration == null) return "1";
+    int totalSeconds = int.tryParse(duration.toString()) ?? 0;
+    if (totalSeconds == 0) return "1";
+
+    double minutes = totalSeconds / 60;
+    int episodes = (minutes / 2).ceil(); // .ceil() para redondear hacia arriba
+
+    return episodes.toString();
+  }
+
   Future<void> _loadInitialData() async {
-    // 1. Define la lista de canales que quieres consultar
     final List<String> channels = [
       'CinePulseChannel',
       'combofilm',
       'LCHDORAMAS',
       'NovelasHDTM',
     ];
-
     try {
-      // 2. Creamos las peticiones en paralelo
-      final requests = channels.map((channel) {
-        return http.get(
+      final requests = channels.map(
+        (channel) => http.get(
           Uri.parse(
-            'https://api.dailymotion.com/user/$channel/videos?fields=id,title,thumbnail_720_url,duration,views_total&limit=50', // Bajamos a 50 para no saturar si son muchos canales
+            'https://api.dailymotion.com/user/$channel/videos?fields=id,title,thumbnail_720_url,duration,views_total&limit=50',
           ),
-        );
-      }).toList();
+        ),
+      );
 
       final responses = await Future.wait(requests);
-
       List<dynamic> allFetchedVideos = [];
       Set<String> extractedWords = {"All"};
 
-      // 3. Procesamos cada respuesta
       for (var response in responses) {
         if (response.statusCode == 200) {
           final List<dynamic> fetchedVideos = json.decode(
             response.body,
           )['list'];
           allFetchedVideos.addAll(fetchedVideos);
-
-          // Extraemos palabras para categorías de este set de videos
           for (var video in fetchedVideos) {
             String title = video['title'].toString();
             List<String> words = title
@@ -73,30 +104,21 @@ class _ExplorerViewState extends State<ExplorerView> {
                 .where((w) => w.length > 5)
                 .map((w) => w.replaceAll(RegExp(r'[^\w\s]'), ''))
                 .toList();
-
-            if (words.isNotEmpty) {
-              extractedWords.add(words[0]);
-            }
+            if (words.isNotEmpty) extractedWords.add(words[0]);
           }
         }
       }
 
-      // 4. Actualizamos el estado una sola vez con la data combinada
       if (mounted) {
         setState(() {
-          // Opcional: Mezclar para que no aparezcan todos los de un canal primero
           allFetchedVideos.shuffle();
-
           _allVideos = allFetchedVideos;
           _displayVideos = allFetchedVideos;
-
-          // Tomamos las primeras 10 palabras únicas como categorías
-          _dynamicCategories = extractedWords.take(10).toList();
+          _dynamicCategories = extractedWords.take(12).toList();
           _isLoading = false;
         });
       }
     } catch (e) {
-      debugPrint("Error loading data: $e");
       if (mounted) setState(() => _isLoading = false);
     }
   }
@@ -104,52 +126,273 @@ class _ExplorerViewState extends State<ExplorerView> {
   void _filterByCategory(String category) {
     setState(() {
       _selectedCategory = category;
-      if (category == "All") {
-        _displayVideos = _allVideos;
-      } else {
-        _displayVideos = _allVideos
-            .where(
-              (v) => v['title'].toString().toLowerCase().contains(
-                category.toLowerCase(),
-              ),
-            )
-            .toList();
-      }
+      _displayVideos = category == "All"
+          ? _allVideos
+          : _allVideos
+                .where(
+                  (v) => v['title'].toString().toLowerCase().contains(
+                    category.toLowerCase(),
+                  ),
+                )
+                .toList();
     });
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF050505),
-      body: _isLoading
-          ? const Center(child: TikTokLoader(size: 25))
-          : CustomScrollView(
-              controller: _scrollController,
-              physics: const BouncingScrollPhysics(),
-              slivers: [
-                _buildAnimatedHero(),
-                SliverToBoxAdapter(child: _buildDynamicCategoryBar()),
-                _buildMainGridWithAds(), // NUEVA LÓGICA AQUÍ
-                const SliverToBoxAdapter(child: SizedBox(height: 100)),
-              ],
-            ),
+      backgroundColor: Colors.black,
+      body: Stack(
+        children: [
+          _buildBackgroundGlow(),
+          _isLoading
+              ? _buildShimmerLoadingLayout()
+              : CustomScrollView(
+                  controller: _scrollController,
+                  physics: const BouncingScrollPhysics(),
+                  slivers: [
+                    _buildAnimatedHero(),
+                    _buildSectionHeader("CATEGORÍAS"),
+                    SliverToBoxAdapter(child: _buildDynamicCategoryBar()),
+                    _buildSectionHeader("CONTENIDO PREMIUM"),
+                    _buildMainGridWithAds(),
+                    const SliverToBoxAdapter(child: SizedBox(height: 100)),
+                  ],
+                ),
+        ],
+      ),
     );
   }
 
-  // --- LÓGICA DE GRID CON MREC ---
+  // --- COMPONENTES UI ---
+
+  Widget _buildBackgroundGlow() {
+    return Positioned(
+      top: -100,
+      right: -50,
+      child: Container(
+        width: 400,
+        height: 400,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          color: Colors.redAccent.withValues(alpha: 0.04),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.redAccent.withValues(alpha: 0.08),
+              blurRadius: 200,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSectionHeader(String title) {
+    return SliverToBoxAdapter(
+      child: Padding(
+        padding: const EdgeInsets.only(left: 20, top: 30, bottom: 10),
+        child: Text(
+          title,
+          style: const TextStyle(
+            color: Colors.white24,
+            fontSize: 10,
+            fontWeight: FontWeight.bold,
+            letterSpacing: 2.5,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildAnimatedHero() {
+    if (_allVideos.isEmpty) return const SliverToBoxAdapter();
+    final featured = _allVideos[0];
+    final isFav = _favoriteIds.contains(featured['id']);
+
+    return SliverToBoxAdapter(
+      child: Stack(
+        children: [
+          Container(
+            height: 550,
+            foregroundDecoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [
+                  Colors.transparent,
+                  Colors.black.withValues(alpha: 0.4),
+                  Colors.black,
+                ],
+              ),
+            ),
+            child: Image.network(
+              featured['thumbnail_720_url'],
+              fit: BoxFit.cover,
+              width: double.infinity,
+            ),
+          ),
+          Positioned(
+            bottom: 40,
+            left: 24,
+            right: 24,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 4,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Colors.redAccent,
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: const Text(
+                    "TOP TENDENCIA",
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 9,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  featured['title'].toString().toUpperCase(),
+                  maxLines: 2,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 32,
+                    fontWeight: FontWeight.bold,
+                    height: 1,
+                  ),
+                ),
+                const SizedBox(height: 24),
+                Row(
+                  children: [
+                    _buildActionBtn(
+                      Icons.play_arrow_rounded,
+                      "REPRODUCIR",
+                      Colors.white,
+                      Colors.black,
+                      () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) =>
+                                FavoriteSearchPlayerView(videoData: featured),
+                          ),
+                        );
+                      },
+                    ),
+                    const SizedBox(width: 12),
+                    // BOTÓN DE FAVORITOS EN EL HERO
+                    _buildActionBtn(
+                      isFav ? Icons.favorite : Icons.favorite_border,
+                      isFav ? "GUARDADO" : "AÑADIR",
+                      Colors.white.withValues(alpha: 0.1),
+                      isFav ? Colors.redAccent : Colors.white,
+                      () => _toggleFavorite(featured['id']),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildActionBtn(
+    IconData icon,
+    String label,
+    Color bg,
+    Color text,
+    VoidCallback onTap,
+  ) {
+    return Expanded(
+      child: GestureDetector(
+        onTap: onTap,
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(12),
+          child: BackdropFilter(
+            filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+            child: Container(
+              padding: const EdgeInsets.symmetric(vertical: 16),
+              decoration: BoxDecoration(
+                color: bg,
+                border: Border.all(color: Colors.white10),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(icon, color: text, size: 20),
+                  const SizedBox(width: 8),
+                  Text(
+                    label,
+                    style: TextStyle(
+                      color: text,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 12,
+                      letterSpacing: 1,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDynamicCategoryBar() {
+    return SizedBox(
+      height: 45,
+      child: ListView.builder(
+        scrollDirection: Axis.horizontal,
+        itemCount: _dynamicCategories.length,
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        itemBuilder: (context, index) {
+          final cat = _dynamicCategories[index];
+          bool sel = _selectedCategory == cat;
+          return Padding(
+            padding: const EdgeInsets.only(right: 10),
+            child: GestureDetector(
+              onTap: () => _filterByCategory(cat),
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 300),
+                padding: const EdgeInsets.symmetric(horizontal: 22),
+                decoration: BoxDecoration(
+                  color: sel
+                      ? Colors.white
+                      : Colors.white.withValues(alpha: 0.05),
+                  borderRadius: BorderRadius.circular(15),
+                ),
+                child: Center(
+                  child: Text(
+                    cat.toUpperCase(),
+                    style: TextStyle(
+                      color: sel ? Colors.black : Colors.white60,
+                      fontSize: 11,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
   Widget _buildMainGridWithAds() {
-    List<Widget> gridItems = [];
-
+    List<dynamic> items = [];
     for (int i = 0; i < _displayVideos.length; i++) {
-      // Añadir el video actual
-      gridItems.add(_buildPosterCard(_displayVideos[i]));
-
-      // Cada 5 videos (índice 4, 9, 14...), insertamos un bloque de anuncio
-      // Usamos i + 1 porque el índice empieza en 0
-      if ((i + 1) % 5 == 0) {
-        gridItems.add(_buildMrecAdItem());
-      }
+      items.add(_displayVideos[i]);
+      if ((i + 1) % 6 == 0) items.add("AD");
     }
 
     return SliverPadding(
@@ -159,199 +402,21 @@ class _ExplorerViewState extends State<ExplorerView> {
           crossAxisCount: 2,
           mainAxisSpacing: 25,
           crossAxisSpacing: 15,
-          childAspectRatio: 0.7,
+          childAspectRatio: 0.72,
         ),
-        delegate: SliverChildBuilderDelegate(
-          (context, index) => gridItems[index],
-          childCount: gridItems.length,
-        ),
-      ),
-    );
-  }
-
-  // Widget del Anuncio MREC diseñado para encajar en el Grid
-  Widget _buildMrecAdItem() {
-    return Container(
-      decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.05),
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Column(
-        children: [
-          const Padding(
-            padding: EdgeInsets.symmetric(vertical: 4),
-            child: Text(
-              "ANUNCIO",
-              style: TextStyle(color: Colors.grey, fontSize: 10),
-            ),
-          ),
-          Expanded(
-            child: AppodealBanner(
-              adSize: AppodealBannerSize.MEDIUM_RECTANGLE,
-              placement: "default",
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // --- RESTO DE TUS WIDGETS ---
-
-  Widget _buildAnimatedHero() {
-    if (_allVideos.isEmpty) return const SliverToBoxAdapter();
-    final featuredVideo = _allVideos[0];
-    return SliverToBoxAdapter(
-      child: Stack(
-        children: [
-          Container(
-            height: 500,
-            decoration: BoxDecoration(
-              image: DecorationImage(
-                image: NetworkImage(featuredVideo['thumbnail_720_url']),
-                fit: BoxFit.cover,
-              ),
-            ),
-          ),
-          Container(
-            height: 501,
-            decoration: const BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
-                colors: [Colors.transparent, Colors.black87, Color(0xFF050505)],
-              ),
-            ),
-            padding: const EdgeInsets.all(20),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.end,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  "DESTACADO DE HOY",
-                  style: TextStyle(
-                    color: Colors.cyanAccent,
-                    fontWeight: FontWeight.bold,
-                    letterSpacing: 2,
-                    fontSize: 12,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  featuredVideo['title'],
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 32,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                const SizedBox(height: 20),
-                Row(
-                  children: [
-                    _premiumButton(
-                      Icons.play_arrow,
-                      "PLAY",
-                      Colors.white,
-                      Colors.black,
-                      featuredVideo,
-                    ),
-                    const SizedBox(width: 12),
-                    _premiumButton(
-                      Icons.info_outline,
-                      "INFO",
-                      Colors.white.withOpacity(0.2),
-                      Colors.white,
-                      featuredVideo,
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 10),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _premiumButton(
-    IconData icon,
-    String label,
-    Color bg,
-    Color text,
-    dynamic video,
-  ) {
-    return Expanded(
-      child: GestureDetector(
-        onTap: () => Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (context) => FavoriteSearchPlayerView(videoData: video),
-          ),
-        ),
-        child: Container(
-          padding: const EdgeInsets.symmetric(vertical: 12),
-          decoration: BoxDecoration(
-            color: bg,
-            borderRadius: BorderRadius.circular(8),
-          ),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(icon, color: text, size: 22),
-              const SizedBox(width: 8),
-              Text(
-                label,
-                style: TextStyle(
-                  color: text,
-                  fontWeight: FontWeight.bold,
-                  fontSize: 16,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildDynamicCategoryBar() {
-    return Container(
-      height: 50,
-      margin: const EdgeInsets.symmetric(vertical: 15),
-      child: ListView.builder(
-        scrollDirection: Axis.horizontal,
-        itemCount: _dynamicCategories.length,
-        padding: const EdgeInsets.symmetric(horizontal: 16),
-        itemBuilder: (context, index) {
-          final cat = _dynamicCategories[index];
-          bool isSelected = _selectedCategory == cat;
-          return Padding(
-            padding: const EdgeInsets.only(right: 10),
-            child: ChoiceChip(
-              label: Text(cat),
-              selected: isSelected,
-              onSelected: (val) => _filterByCategory(cat),
-              selectedColor: Colors.cyanAccent,
-              backgroundColor: Colors.white.withOpacity(0.05),
-              labelStyle: TextStyle(
-                color: isSelected ? Colors.black : Colors.white70,
-              ),
-              showCheckmark: false,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(20),
-              ),
-            ),
-          );
-        },
+        delegate: SliverChildBuilderDelegate((context, index) {
+          if (items[index] == "AD") return _buildMrecAdItem();
+          return _buildPosterCard(items[index]);
+        }, childCount: items.length),
       ),
     );
   }
 
   Widget _buildPosterCard(dynamic video) {
-    int durationMinutes = (video['duration'] / 60).round();
+    bool isFav = _favoriteIds.contains(video['id']);
+    // CÁLCULO DE EPISODIOS BASADO EN DURACIÓN DIVIDIDO 2 MINUTOS
+    String epCount = _calculateEpisodesFromDuration(video['duration']);
+
     return GestureDetector(
       onTap: () => Navigator.push(
         context,
@@ -364,40 +429,57 @@ class _ExplorerViewState extends State<ExplorerView> {
         children: [
           Expanded(
             child: ClipRRect(
-              borderRadius: BorderRadius.circular(12),
+              borderRadius: BorderRadius.circular(20),
               child: Stack(
-                fit: StackFit.expand,
                 children: [
-                  FadeInImage.assetNetwork(
-                    placeholder:
-                        'assets/placeholder.png', // Asegúrate de tener un asset o usa Container
-                    image: video['thumbnail_720_url'],
-                    fit: BoxFit.cover,
-                    imageErrorBuilder: (context, error, stackTrace) =>
-                        Container(color: Colors.grey[900]),
+                  Positioned.fill(
+                    child: Image.network(
+                      video['thumbnail_720_url'],
+                      fit: BoxFit.cover,
+                    ),
                   ),
+                  // BADGE DE EPISODIOS
                   Positioned(
-                    bottom: 8,
-                    left: 8,
+                    top: 10,
+                    left: 10,
                     child: Container(
                       padding: const EdgeInsets.symmetric(
-                        horizontal: 6,
-                        vertical: 2,
+                        horizontal: 8,
+                        vertical: 4,
                       ),
                       decoration: BoxDecoration(
-                        color: Colors.black.withOpacity(0.8),
-                        borderRadius: BorderRadius.circular(4),
-                        border: Border.all(
-                          color: Colors.cyanAccent,
-                          width: 0.5,
-                        ),
+                        color: Colors.black.withValues(alpha: 0.8),
+                        borderRadius: BorderRadius.circular(8),
                       ),
                       child: Text(
-                        "$durationMinutes MIN",
+                        "$epCount EPISODIOS",
                         style: const TextStyle(
-                          color: Colors.white,
+                          color: Colors.redAccent,
                           fontSize: 9,
                           fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                  ),
+                  // CORAZÓN DE FAVORITO FLOTANTE
+                  Positioned(
+                    bottom: 10,
+                    right: 10,
+                    child: GestureDetector(
+                      onTap: () => _toggleFavorite(video['id']),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(50),
+                        child: BackdropFilter(
+                          filter: ImageFilter.blur(sigmaX: 5, sigmaY: 5),
+                          child: Container(
+                            padding: const EdgeInsets.all(8),
+                            color: Colors.white.withValues(alpha: 0.1),
+                            child: Icon(
+                              isFav ? Icons.favorite : Icons.favorite_border,
+                              color: isFav ? Colors.redAccent : Colors.white,
+                              size: 18,
+                            ),
+                          ),
                         ),
                       ),
                     ),
@@ -414,10 +496,62 @@ class _ExplorerViewState extends State<ExplorerView> {
             style: const TextStyle(
               color: Colors.white,
               fontSize: 13,
-              fontWeight: FontWeight.w600,
+              fontWeight: FontWeight.bold,
+              height: 1.2,
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildShimmerLoadingLayout() {
+    return Shimmer.fromColors(
+      baseColor: Colors.white10,
+      highlightColor: Colors.white24,
+      child: SingleChildScrollView(
+        child: Column(
+          children: [
+            Container(height: 550, color: Colors.black),
+            const SizedBox(height: 20),
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: GridView.count(
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                crossAxisCount: 2,
+                mainAxisSpacing: 20,
+                crossAxisSpacing: 15,
+                childAspectRatio: 0.7,
+                children: List.generate(
+                  4,
+                  (i) => Container(
+                    decoration: BoxDecoration(
+                      color: Colors.black,
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMrecAdItem() {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.02),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: Colors.white10),
+      ),
+      child: Center(
+        child: AppodealBanner(
+          adSize: AppodealBannerSize.MEDIUM_RECTANGLE,
+          placement: "default",
+        ),
       ),
     );
   }

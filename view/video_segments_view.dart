@@ -417,8 +417,10 @@ class _VideoSegmentsViewState extends State<VideoSegmentsView> {
   }
 
   // Widget auxiliar para el botón de pantalla completa
+  // Widget auxiliar para el botón de pantalla completa en VideoSegmentsView
   Widget _buildFullScreenButton(bool isLandscape, BuildContext context) {
     return Positioned(
+      // Mantenemos la posición dinámica según la orientación
       bottom: isLandscape ? 30 : MediaQuery.of(context).size.height * 0.25,
       left: 0,
       right: 0,
@@ -427,7 +429,9 @@ class _VideoSegmentsViewState extends State<VideoSegmentsView> {
           isLandscape: isLandscape,
           onPressed: () async {
             _resetHideTimer();
+
             if (isLandscape) {
+              // --- SALIR DE PANTALLA COMPLETA ---
               await SystemChrome.setPreferredOrientations([
                 DeviceOrientation.portraitUp,
               ]);
@@ -435,13 +439,34 @@ class _VideoSegmentsViewState extends State<VideoSegmentsView> {
                 SystemUiMode.edgeToEdge,
               );
             } else {
+              // --- ENTRAR A PANTALLA COMPLETA (Tu lógica anterior) ---
+
+              // 1. Girar el dispositivo
               await SystemChrome.setPreferredOrientations([
                 DeviceOrientation.landscapeLeft,
                 DeviceOrientation.landscapeRight,
               ]);
+
+              // Poner modo inmersivo (oculta barras de sistema)
               await SystemChrome.setEnabledSystemUIMode(
                 SystemUiMode.immersiveSticky,
               );
+
+              // 2. Pequeña espera para que la rotación termine
+              await Future.delayed(const Duration(milliseconds: 200));
+
+              // 3. Cambiar el tiempo y sincronizar el estado
+              // Notificamos al padre (como hacias antes con widget.onTimeUpdate(120))
+              widget.onTimeUpdate(const Duration(seconds: 120));
+
+              // IMPORTANTE: También movemos el reproductor interno
+              // y el controlador de páginas al segmento correspondiente
+              if (_playerController != null) {
+                await _playerController!.seekTo(const Duration(seconds: 120));
+              }
+
+              // Si el segmento 1 empieza en el segundo 120, movemos la página:
+              _episodeController.jumpToPage(1);
             }
           },
         ),
